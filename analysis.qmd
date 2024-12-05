@@ -1,0 +1,146 @@
+---
+title: "LLM Responses"
+author: "Grace Perkins and Nick Spies"
+format: html
+editor: visual
+---
+
+```{r}
+
+library(tidyverse)
+library(scico)
+
+theme_ns <- theme(text = element_text(family = "Arial"),
+                  title = element_text(size = 14, margin = margin(0, 0, 8, 0)),
+                  plot.subtitle = element_text(size = 12, face = "plain", hjust = 0),
+                  plot.title = element_text(hjust = 0),
+                  axis.title = element_text(size = 12, face = "bold", margin = margin(4,4,4,4)),
+                  axis.title.x.bottom = element_text(face = "bold", margin = margin(4,0,0,0)),
+                  axis.title.y.left = element_text(face = "bold", margin = margin(0,4,0,0)),
+                  legend.title = element_text(face = "bold.italic", size = 12),
+                  axis.line = element_line(),
+                  axis.ticks = element_blank(),
+                  panel.grid = element_blank(), 
+                  panel.background = element_blank(),
+                  strip.text = element_text(size = 10, face = "bold.italic"),
+                  strip.background = element_blank())
+theme_set(theme_ns)
+
+data2 <- readxl::read_xlsx('new_data.xlsx', sheet="Responses")
+data2$Final <- as.factor(data2$Final)
+data2$RAG <- as.factor(data2$RAG)
+data2$Model <- as.factor(data2$Model)
+
+```
+
+## Make Correct Figure By Question
+
+```{r}
+
+accuracy2 <- data2 |> group_by(Model, RAG) |> count(Final) |> mutate(prop = round(n/sum(n), digits = 2), label = paste0(n, "/20 ", "(", prop *100, '%"'))
+
+
+gg_tile_accuracy2 <- ggplot(data2, aes(x=RAG, y=ID, fill =Final)) + geom_tile(color = 'black', alpha=0.75) + scale_y_continuous(name = 'Question ID', limits = c(0,21), breaks = c(1,5,10,15,20)) + facet_wrap(~Model) + scico::scale_fill_scico_d(palette = 'bilbao', begin =0.15, end = 0.85)  + ggtitle("Response Accuracy by Question") + theme(plot.title = element_text(face = "bold"), panel.background = element_blank(), plot.background = element_blank(), legend.box = element_blank(), axis.title.y.left = element_blank(), axis.text.y.left = element_text(face = "bold.italic"), legend.position = c(0.7, 1.1), legend.direction = "horizontal", legend.title = element_blank(), legend.background = element_blank())
+
+
+
+gg_tile_accuracy2
+ggsave("response_accuracy_by_question.svg")
+
+
+
+
+```
+
+### Do Stats
+
+```{r}
+
+library(gtsummary)
+library(gt)
+
+tbl_summary(data, by = Correct, include = c("Model", "RAG", "tag"), percent = "row") |> 
+  add_p() |> 
+  add_ci() |> 
+  bold_p() |> 
+  bold_labels() |> 
+  italicize_levels()
+
+tbl_uvregression(data |> select(Correct, Model, RAG), method = glm, y = "Correct", exponentiate = T, method.args = list(family = binomial)) |> bold_p()
+
+model <- glm(Correct ~ Model + RAG, data = data, family = binomial)
+tbl_regression(model, exponentiate = T) |> bold_p()
+
+```
+
+```{r}
+# Define the McNemar's Test function
+mcnemars_test <- function(correct_method1, correct_method2, total_questions) {
+  # Check that total_questions is greater than or equal to both correct counts
+  if (correct_method1 > total_questions || correct_method2 > total_questions) {
+    stop("Correct answers cannot exceed the total number of questions.")
+  }
+  
+  # Calculate discordant pairs
+  method1_only_correct <- correct_method1 - correct_method2
+  method2_only_correct <- correct_method2 - correct_method1
+  
+  # Ensure nonnegative discordant pair values
+  method1_only_correct <- max(0, method1_only_correct)
+  method2_only_correct <- max(0, method2_only_correct)
+  
+  # Create the contingency table
+  data <- matrix(c(
+    total_questions - correct_method1 - method2_only_correct, # Both methods incorrect
+    method1_only_correct,                                     # Method 1 correct, Method 2 incorrect
+    method2_only_correct,                                     # Method 1 incorrect, Method 2 correct
+    total_questions - method1_only_correct - method2_only_correct # Both methods correct
+  ), nrow = 2, byrow = TRUE,
+  dimnames = list("Method 1" = c("Correct", "Incorrect"),
+                  "Method 2" = c("Correct", "Incorrect")))
+  
+  # Check if the table is valid for McNemar's test
+  if (any(data < 0)) {
+    stop("Invalid contingency table generated. Check input values.")
+  }
+  
+  # Perform McNemar's test
+  test_result <- mcnemar.test(data)
+  
+  # Return the p-value
+  return(test_result$p.value)
+}
+
+# Example usage
+p_value <- mcnemars_test(correct_method1 = 12, correct_method2 = 7, total_questions = 20)
+print(p_value)
+
+
+
+```
+
+```{r}
+# Define the function for Exact McNemar's Test
+exact_mcnemars_test <- function(b, c) {
+  # Ensure inputs are non-negative integers
+  if (b < 0 || c < 0 || b != as.integer(b) || c != as.integer(c)) {
+    stop("Inputs b and c must be non-negative integers.")
+  }
+  
+  # Create a 2x2 contingency table
+  data <- matrix(c(0, b, c, 0), nrow = 2,
+                 dimnames = list("Method 1" = c("Correct", "Incorrect"),
+                                 "Method 2" = c("Correct", "Incorrect")))
+  
+  # Perform McNemar's exact test
+  test_result <- mcnemar.test(data, correct = FALSE)
+  
+  # Return the p-value
+  return(test_result$p.value)
+}
+
+# Example usage
+p_value <- exact_mcnemars_test(b = 5, c = 8)  # Replace b and c with your data
+print(p_value)
+
+```
